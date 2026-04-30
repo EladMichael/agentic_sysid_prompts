@@ -1,0 +1,78 @@
+You're helping me build a system identification model for a 5-zone HVAC building.
+The goal is a PyTorch model that predicts how zone temperatures evolve over a
+full day, given initial conditions and known future inputs (controls and weather).
+This is autoregressive prediction — the model steps forward one timestep at a
+time using its own previous outputs.
+
+Here's what I care about, and why.
+
+--- What matters ---
+
+I want a model that actually learns the thermal dynamics of this building.
+Not one that just tracks the mean, not one that memorizes training patterns and
+falls apart on new data. A good system ID model should capture how supply air
+temperatures and flows drive zone temperatures, how outdoor conditions and solar
+gains act as disturbances, and how those effects play out over time.
+
+The model will be evaluated on out-of-distribution conditions — weather and
+schedules from a different time period than the training data. I'd rather have
+a model that's slightly worse on training data but holds up under novel
+conditions. If you have to choose between fitting the training set perfectly
+and building something robust, choose robust.
+
+I want to understand every choice you make. Write like an engineer presenting
+work to a team: what did you observe in the data, what did you try, why did you
+try it, and what happened. If something didn't work, say so and say why. No
+unexplained magic.
+
+--- Data ---
+
+Training data: ./train/ (5-minute timestep, 300s resolution)
+Dev data: ./dev/ (same format — use this to monitor generalization, but don't
+  make training decisions based on it; it's a sanity check, not a tuning set)
+
+The columns include zone air temperatures (5 zones), VAV box supply air
+temperatures and flows, cooling setpoints, outdoor temperature, solar
+irradiance, and occupancy. You'll need to classify these into states (zone
+temps — the things you're predicting), controls (supply air temps, flows,
+setpoints), and disturbances (weather, occupancy, solar).
+
+--- Interface contract ---
+
+Read load_model.py before you start building anything. It defines:
+  - The checkpoint format (what keys the .pt file must contain)
+  - The model class interface (HVACSysIdModel constructor args, forward signature)
+  - The normalize/denormalize functions your module must export
+  - How autoregressive rollout works during inference
+
+Your model module must be named hvac_sysid_model.py and satisfy that contract
+exactly. load_model.py imports from it — if the interface doesn't match,
+nothing works.
+
+--- Constraints ---
+
+- Context window: no more than 12 timesteps (1 hour at 5-min resolution).
+  Shorter is fine if it works.
+- Framework: PyTorch
+- Random seed: 42 everywhere (numpy, torch, python) for reproducibility
+- Architecture: your call. Pick what makes sense for the problem and justify it.
+
+--- Artifacts to produce ---
+
+1. hvac_sysid_model.py — the model module (compatible with load_model.py)
+2. train.py (or similar) — training script
+3. Model checkpoint saved to ./models/best_model.pt
+4. Predictions generated from seed files:
+     - Seeds in ./test_id_seeds/ and ./test_ood1_seeds/
+     - Output to ./predictions/
+     - Use load_model.py to generate them (or follow the same rollout logic)
+5. Brief notes on what you tried, what worked, and what the dev-set
+   performance looks like — inline in your conversation is fine
+
+--- That's it ---
+
+Explore the data, read the inference script, build something that genuinely
+captures the building dynamics, and show your reasoning along the way.
+
+Finally Create a final markdown file report of the modeling choices made, 
+why you made them, intermediate and final results.

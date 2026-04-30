@@ -1,0 +1,19 @@
+Build a PyTorch system identification model that predicts HVAC zone temperatures
+autoregressively over a full day (288 steps at 5-minute resolution).
+
+Training data: ./train/
+Dev data: ./dev/ (monitor only, don't train on it)
+Interface contract: read ./load_model.py — your model must be loadable by it.
+Seed files: ./test_id_seeds/ and ./test_ood1_seeds/
+Predictions go in: ./predictions/
+
+Context window: 12 timesteps max (1 hour). Shorter is fine.
+Random seed: 42. Use GPU if available.
+
+Produce: hvac_sysid_model.py, a saved checkpoint, and prediction CSVs.
+Use load_model.py to generate the predictions from the seeds.
+
+Iterate until the model is good. Show your work.
+
+Create a final markdown file report of the modeling choices made, 
+why you made them, intermediate and final results.

@@ -1,0 +1,219 @@
+System Identification Model: Iterative Training & Validation
+
+Objective
+
+You are a coding agent tasked with building, training, and iteratively refining a System Identification (Sys ID) model using PyTorch. You will work with time-series data to learn a dynamical system's behavior via full-day autoregressive rollouts (defined precisely below). Your work should read as a clear, well-reasoned engineering narrative — at every stage we want to understand what you observed, what you changed, and why you changed it. The story of how the model evolves matters just as much as the final result.
+
+Data & Environment
+
+- Training data: ./train/train_300.csv — Training data at 5-minute (300-second) resolution. Use this for all model fitting and iterative RMSE convergence checks.
+- Development data: ./dev/dev_300.csv — Dev data at the same resolution. Use this as a held-out set to monitor generalization. Do not use it to make training decisions such as early stopping or hyperparameter selection during the iterative refinement loop.
+- Model interface contract: ./load_model.py — This script defines the exact interface your model must conform to. Read it carefully. Your trained model must be loadable by this script, which means you must produce:
+  - A Python module called hvac_sysid_model.py that defines the HVACSysIdModel class, plus normalize_array and denormalize_array helper functions, exactly as load_model.py imports them.
+  - A .pt checkpoint file containing the keys that load_model.py expects: model_state_dict, classification, norm_stats, timestep_seconds, context_length, hidden_size, num_layers.
+- Seed files: ./test_id_seeds/ contains 5 in-distribution seed CSVs (june_23.csv through june_27.csv). ./test_ood1_seeds/ contains 5 out-of-distribution seed CSVs (july_1.csv through july_5.csv). Each seed CSV has 288 rows (one full day at 5-minute resolution), with zone temperatures present for the first 12 rows (1 hour of context) and NaN thereafter.
+- Predictions directory: ./predictions/ — Write completed prediction CSVs here during Step 5.
+- Validation script: ./validation.py — A scoring script that compares predictions to ground truth. The agent does NOT run this script. It is used externally by the evaluator after you produce predictions.
+- Framework: All model code must use PyTorch (torch, torch.nn, etc.). Do not use TensorFlow, JAX, or sklearn estimators for the core model.
+
+Key Definition — Autoregressive Rollout
+
+During evaluation (and optionally during training), the model operates autoregressively for an entire day:
+
+1. The model is seeded with up to W true timesteps from the beginning of the day, where W is the model's chosen input window length.
+2. The model predicts the next single timestep.
+3. That prediction is appended to the history, the window slides forward by one step, and the model predicts the next timestep using the updated window — which now contains its own prior predictions.
+4. This continues until the entire day has been predicted.
+
+Input Window Constraint
+
+The model may use 1 to 12 timesteps (up to 1 hour at 5-minute resolution) as its input window to predict the next timestep. This is a hard upper bound. Using a shorter window is perfectly acceptable and encouraged if it performs well — a leaner model that trains faster is preferred over a marginally better model that is slow.
+
+Step-by-Step Instructions
+
+Complete every step below in order. After each step, print a clear header (e.g., ===== STEP 1 COMPLETE =====) so progress is easy to track.
+
+Step 0 — Data Exploration & Preprocessing
+
+1. Load ./train/train_300.csv and ./dev/dev_300.csv.
+2. Inspect and report: number of samples, feature dimensions, time resolution (confirm it is 5-minute / 300-second), and any missing/NaN values.
+3. The data is at 5-minute resolution: 12 timesteps per hour, 288 timesteps per full day. Print both values explicitly — the 12-timestep-per-hour figure is your maximum input window size.
+4. Read ./load_model.py to understand the model interface contract. Note the expected checkpoint keys, the HVACSysIdModel constructor signature, and the normalize/denormalize helpers you must implement.
+5. Build a PyTorch Dataset / DataLoader pipeline that:
+   - Segments data into full-day windows.
+   - Separates inputs (features at time t, or a window of recent timesteps) from targets (the next timestep).
+   - Applies any necessary normalization (record the normalization statistics so predictions can be un-normalized later).
+
+Step 1 — Initial Model Creation & Training (Iteration 1)
+
+1. Design a PyTorch nn.Module for the Sys ID model. Choose an architecture you judge appropriate for autoregressive time-series prediction (e.g., MLP, RNN/LSTM/GRU, Temporal CNN, or a hybrid). The class must be named HVACSysIdModel and its constructor signature must match what load_model.py expects.
+2. Print a full Model Identity Card (see template below) so we know exactly what was built.
+3. Justify your architectural choices: why this architecture, this width, this depth, this activation function, this input window length, this optimizer, this learning rate? Ground your reasoning in what you observed in Step 0 (data dimensionality, sequence length, etc.).
+4. Train the model on the training set. Print epoch-level loss at minimum every 5 epochs.
+5. After training, perform full-day autoregressive rollouts on every day in the training set and compute:
+   - Per-day RMSE (one RMSE value per day).
+   - Overall training RMSE (single scalar across all days).
+6. Save this model's state dict as model_iter1.pt. The checkpoint must include all keys that load_model.py expects.
+
+Print the overall training RMSE and a summary table of per-day RMSEs. Label this as Iteration 1.
+
+Step 2 — Iterative Refinement Loop (Iteration 2, 3, …)
+Repeat the following until the convergence criterion is met:
+
+1. Diagnose the current model's performance. Before changing anything, write a short analysis paragraph addressing questions such as:
+   - Is the model overfitting (training loss low but rollout RMSE high)?
+   - Is the model underfitting (high training loss, poor expressivity)?
+   - Is it merely tracking the mean and not capturing dynamics?
+   - Are errors accumulating rapidly during rollout (early timesteps accurate, late timesteps diverge)?
+   - Are certain days significantly worse than others — and if so, why might that be?
+   This diagnosis is the most important part of each iteration. Be specific and reference actual numbers.
+
+2. Propose changes. Based on your diagnosis, state clearly what you intend to change and why that change addresses the diagnosed issue. Changes may include (but are not limited to): architecture depth/width, activation functions, input window length (within the 12-timestep cap), learning rate, number of training epochs, regularization, dropout, teacher-forcing schedule, loss function, data augmentation, or normalization strategy.
+   Balance complexity and training time. Prefer simpler, faster-to-train changes first. Do not jump to a massive model if a learning rate adjustment might suffice. If a change significantly increases training time, acknowledge the trade-off explicitly.
+
+3. Print a full Model Identity Card for the revised model (even if the architecture didn't change — hyperparameters and training config matter too).
+
+4. Train the revised model from scratch (or fine-tune — state which and why).
+
+5. Evaluate via full-day autoregressive rollouts on the training set, computing per-day RMSE and overall training RMSE exactly as in Step 1.
+
+6. Convergence check:
+
+   After each iteration, evaluate the model's quality using the criteria below. Convergence requires meeting BOTH Condition A (absolute quality) AND Condition B (diminishing returns).
+
+   **Condition A — Absolute RMSE Quality Gate (Temperature Predictions)**
+   The data is at 5-minute resolution (288 steps/day, 12 steps/hour). The target RMSE threshold is ≤ 0.40°C.
+
+   The overall training RMSE (across all days) must be at or below this threshold.
+
+   **Condition B — Diminishing Returns Check**
+   The improvement in overall training RMSE between the current iteration and the previous iteration must be less than 0.02°C (0.036°F):
+
+       |RMSE_prev − RMSE_current| < 0.02°C
+
+   This indicates the optimization has effectively plateaued and further architectural or hyperparameter changes are unlikely to yield meaningful gains.
+
+   **Convergence Logic:**
+	if (overall_RMSE ≤ 0.40) AND (|RMSE_prev - RMSE_current| < 0.02):
+	→ CONVERGED. Proceed to Step 3.
+	elif (overall_RMSE ≤ 0.40) AND (improvement ≥ 0.02):
+	→ Quality target met but model is still improving. Run ONE more iteration
+	to confirm stability, then converge if the quality gate still holds.
+	elif (overall_RMSE > 0.40) AND (|RMSE_prev - RMSE_current| < 0.02):
+	→ Plateaued above target. The model has structural or data limitations.
+	Print a warning noting the gap between current RMSE and target.
+	Attempt at least one more iteration with a meaningfully different
+	approach (e.g., architecture change, different window length,
+	normalization strategy). If the next iteration still does not break
+	through, proceed to the guard-rail.
+	else:
+	→ Model is still improving and has not yet reached quality target.
+	Continue iterating.
+
+**Supplementary Diagnostics (print at every iteration):**
+In addition to overall RMSE, compute and print the following at each iteration to guide diagnosis:
+- **Mean Bias Error (MBE):** Average signed error across all rollout timesteps. Should be near zero; a persistent nonzero MBE indicates systematic drift. Flag if |MBE| > 0.1°C.
+- **Max Absolute Error:** The single worst prediction error across all days. Flag if this exceeds 2.0°C — it may indicate a day with unusual disturbances or a regime the model cannot represent.
+- **Worst-Day RMSE vs. Best-Day RMSE:** Print both values and their ratio. A ratio above 3:1 suggests the model struggles with specific operating conditions and may benefit from targeted investigation of those days.
+- **Early vs. Late Rollout Error:** Split each day's rollout into the first half and second half. Compute RMSE for each half separately and report the average across days. If late-half RMSE is more than 2× early-half RMSE, error accumulation is a dominant issue — consider strategies like scheduled sampling / curriculum teacher forcing, shorter input windows to reduce compounding, or training directly on multi-step loss.
+
+**Guard-rail:** If you reach 5 iterations without convergence, stop the loop, select the iteration with the lowest overall training RMSE as the best model, print a warning that includes:
+- The final RMSE achieved vs. the target threshold (0.40°C).
+- A brief hypothesis for why the target was not met (e.g., data quality, missing features, insufficient model capacity, irreducible noise floor).
+- Then proceed to Step 3.
+
+Model Identity Card Template
+
+Print this (or an equivalent table) at every iteration — including Iteration 1:
+
+- Iteration: N
+- Architecture type: e.g., 3-layer MLP / 2-layer LSTM + linear head / etc.
+- Input window (timesteps): e.g., 6 (= 30 minutes at 5-min resolution)
+- Input dimension: e.g., 12 features x 6 steps = 72
+- Output dimension: e.g., 12 (next timestep prediction)
+- Hidden layer widths: e.g., [128, 64]
+- Activation function(s): e.g., ReLU, Tanh on output
+- Dropout / Regularization: e.g., Dropout 0.1, weight decay 1e-4
+- Total trainable parameters: e.g., 23,456
+- Optimizer: e.g., Adam, lr=1e-3
+- Training epochs: e.g., 100
+- Loss function: e.g., MSELoss
+- Training time: e.g., ~45 seconds
+- What changed from previous iteration: e.g., "Increased hidden width from 64->128 to address underfitting diagnosed in Iter 1"
+- Rationale: e.g., "Iter 1 showed high bias on days 3 and 7 with RMSE > 2x mean; model likely lacks capacity"
+
+Step 3 — Final Model Metrics Report
+
+For the final (best) model, compute and print a comprehensive structured report containing:
+
+- Total parameter count: Number of trainable parameters
+- Layer-by-layer breakdown: For each layer: name, type, input dim, output dim, number of parameters
+- Model size on disk: Size of the saved .pt file in KB/MB
+- Weight statistics per layer: Mean, std, min, max of each weight tensor
+- Overall weight norm: Frobenius norm of all parameters concatenated
+- Input / output dimensions: Dimensionality the model expects and produces
+- Architecture summary: A torchsummary-style or manual print of the full architecture
+
+Step 4 — Compare Daily RMSE of the first model against the best model
+
+Produce a side-by-side comparison of the per-day RMSE values from the first model and the best model:
+
+1. Print a table with columns: Day Index | RMSE first model | RMSE best model| Delta (first model - best model) | % Improvement.
+2. Print summary statistics: mean, median, best-day, worst-day for each iteration.
+3. Include a brief written interpretation: what improved, what didn't, and what that tells you about the change you made between the first model and the best model.
+4. Save a matplotlib bar chart or line plot comparing the two iterations' daily RMSEs to daily_rmse_comparison.png.
+
+Step 5 — Generate Predictions from Seeds
+
+1. Take the best model (the converged model from Step 2, or the lowest-RMSE model if the guard-rail triggered).
+2. Use load_model.py to generate full-day predictions from both seed directories. Run the following two commands:
+
+   python load_model.py --model <path_to_best_model.pt> --seeds ./test_id_seeds --output ./predictions
+   python load_model.py --model <path_to_best_model.pt> --seeds ./test_ood1_seeds --output ./predictions
+
+3. Verify that the prediction CSVs were written to ./predictions/ and print a listing of the output files with their row counts.
+4. Note: Do NOT run validation.py. The evaluator runs that externally against your prediction CSVs.
+
+Narrative & Reporting Expectations
+
+Throughout this entire process, write as if you are an engineer presenting your work to a team. Specifically:
+
+- At every iteration, explain what metrics you looked at, what patterns you noticed, and what hypothesis drove your next change.
+- Never make a change without a stated reason. "I increased the hidden size" is insufficient. "I increased the hidden size from 64 to 128 because the training loss plateaued at 0.15 after epoch 40, suggesting the model lacks capacity to represent the system dynamics" is what we want.
+- Acknowledge trade-offs. If a change made some days better but others worse, say so. If training took 3x longer for a marginal gain, say so.
+- Be honest about failures. If an iteration made things worse, analyze why and use that information to guide the next attempt.
+
+General Requirements & Constraints
+
+- Reproducibility: Set random seeds (torch.manual_seed, numpy.random.seed, random.seed) at the start. Use 42 as the seed.
+- Device handling: Detect CUDA/MPS availability and use GPU if present; fall back to CPU gracefully.
+- Code quality: Write clean, well-commented Python. Use functions/classes — avoid one monolithic script.
+- Efficiency: Be mindful of training time. If a simpler model trains in 30 seconds and a complex model trains in 10 minutes with only marginal improvement, strongly prefer the simpler model. Note wall-clock training time for every iteration.
+- Error handling: If data loading fails or load_model.py errors out, print the full traceback and attempt a reasonable fix before giving up.
+- Logging: For every training run, print epoch-level loss at minimum every 10 epochs.
+- Artifacts to save:
+  - hvac_sysid_model.py — The model module conforming to the load_model.py interface contract
+  - model_iter1.pt — Iteration 1 checkpoint (must include all keys load_model.py expects)
+  - model_iterN.pt — Final best model checkpoint (same format)
+  - predictions/*.csv — Completed prediction CSVs for all seed files (both in-distribution and OOD)
+  - daily_rmse_comparison.png — Chart from Step 4
+  - metrics_report.txt — The full model metrics report from Step 3
+  - training_log.json — A JSON file containing, for every iteration: the Model Identity Card fields, overall RMSE, per-day RMSEs, diagnosis paragraph, and rationale for changes.
+
+Output Checklist
+
+Before finishing, verify you have completed and printed results for all of the following:
+
+- [ ] Data exploration summary (Step 0), including confirmation of 5-minute resolution, 12 timesteps/hour, 288 timesteps/day
+- [ ] load_model.py interface contract reviewed and understood (Step 0)
+- [ ] Iteration 1 Model Identity Card, training RMSE, and per-day RMSEs (Step 1)
+- [ ] All subsequent iterations with diagnosis -> rationale -> Model Identity Card -> results (Step 2)
+- [ ] Final model metrics report (Step 3)
+- [ ] First model vs best model daily RMSE comparison table, interpretation, and chart (Step 4)
+- [ ] Predictions generated from test_id_seeds/ and test_ood1_seeds/ via load_model.py (Step 5)
+- [ ] Prediction CSVs written to predictions/ and verified (Step 5)
+- [ ] hvac_sysid_model.py module saved and compatible with load_model.py
+- [ ] All artifact files saved to disk
+- [ ] Create a final markdown file report of the modeling choices made, why you made them, intermediate and final results.
+
+Begin now. Start with Step 0.
